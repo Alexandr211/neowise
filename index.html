@@ -8,7 +8,13 @@
     body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; }
     textarea { box-sizing: border-box; display: block; width: 100%; margin: .5rem 0; padding: .5rem; font: inherit; }
     button { padding: .4rem .8rem; font: inherit; }
-    pre { white-space: pre-wrap; }
+    #output { margin-top: 1.5rem; }
+    #output[hidden] { display: none; }
+    .topic { margin: 0 0 .5rem; }
+    .draft { white-space: pre-wrap; margin: 0; padding: .75rem; background: #f4f4f4; border-radius: .25rem; }
+    .message { margin: 0; }
+    .message.warn { color: #7a4b00; }
+    .message.error { color: #8b0000; }
   </style>
 </head>
 <body>
@@ -18,18 +24,96 @@
     <textarea id="message" rows="4"></textarea>
     <button type="submit">Разобрать заявку</button>
   </form>
-  <pre id="result" aria-live="polite"></pre>
+  <section id="output" hidden aria-live="polite">
+    <p id="status" class="message"></p>
+    <p id="topic" class="topic" hidden></p>
+    <pre id="draft" class="draft" hidden></pre>
+  </section>
   <script type="module">
+    const TOPIC_LABELS = {
+      delivery: "Доставка",
+      pricing: "Цены",
+      other: "Другое",
+    };
+
     const form = document.querySelector("form");
-    const result = document.querySelector("#result");
+    const output = document.querySelector("#output");
+    const statusEl = document.querySelector("#status");
+    const topicEl = document.querySelector("#topic");
+    const draftEl = document.querySelector("#draft");
+
+    function clearDraft() {
+      topicEl.hidden = true;
+      draftEl.hidden = true;
+      topicEl.textContent = "";
+      draftEl.textContent = "";
+    }
+
+    function showReady(topic, draft) {
+      output.hidden = false;
+      statusEl.className = "message";
+      statusEl.textContent = "Черновик готов. Проверьте и отправьте клиенту сами.";
+      topicEl.hidden = false;
+      draftEl.hidden = false;
+      topicEl.textContent = `Тема: ${TOPIC_LABELS[topic] || topic}`;
+      draftEl.textContent = draft;
+    }
+
+    function showManualReview() {
+      output.hidden = false;
+      clearDraft();
+      statusEl.className = "message warn";
+      statusEl.textContent =
+        "Авторазбор недоступен. Разберите заявку вручную и ответьте клиенту сами.";
+    }
+
+    function showError(text) {
+      output.hidden = false;
+      clearDraft();
+      statusEl.className = "message error";
+      statusEl.textContent = text;
+    }
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const reply = await fetch("/api/triage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: document.querySelector("#message").value }),
-      });
-      result.textContent = JSON.stringify(await reply.json(), null, 2);
+      clearDraft();
+      statusEl.className = "message";
+      statusEl.textContent = "Разбираем заявку…";
+      output.hidden = false;
+
+      let reply;
+      try {
+        reply = await fetch("/api/triage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: document.querySelector("#message").value }),
+        });
+      } catch {
+        showError("Не удалось связаться с сервером. Попробуйте ещё раз.");
+        return;
+      }
+
+      let data;
+      try {
+        data = await reply.json();
+      } catch {
+        showError("Сервер вернул непонятный ответ. Разберите заявку вручную.");
+        return;
+      }
+
+      if (data.status === "ready") {
+        showReady(data.topic, data.draft);
+        return;
+      }
+      if (data.status === "manual_review") {
+        showManualReview();
+        return;
+      }
+      if (data.status === "invalid_input") {
+        showError("Введите текст заявки — пустой или неверный ввод не принимается.");
+        return;
+      }
+      showError("Не удалось разобрать заявку. Попробуйте ещё раз или ответьте вручную.");
     });
   </script>
 </body>
